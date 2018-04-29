@@ -22,6 +22,7 @@
 #include <sstream>
 #include <iterator>
 #include <iomanip>
+#include <stack>
 //#include <cuda_runtime.h>
 
 using namespace std;
@@ -293,16 +294,73 @@ struct KMeans {
 */
 
 enum struct Type { OPERATOR, NUMBER, IDENTIFIER, DELIMITER };
-enum struct Which { PLUS, MINUS, TIMES, DIVIDE };
+enum struct Which { PLUS, MINUS, TIMES, DIVIDE, ASSIGN, LBRACKET, RBRACKET, LPAREN, RPAREN, COMMA };
 
 struct Token {
     Type toktype;
-    union value {
-	int intval;
-	Which whichval;
-	string stringval;
-    };
+    int intval;
+    Which whichval;
+    string stringval;
 };
+
+vector<Token*> tokenize (const vector<string>& delimitedLine) {
+    vector<Token*> tokenized(delimitedLine.size());
+
+    for (int i = 0; i < delimitedLine.size(); ++i) {
+	Token* tok = new Token;
+	if (isdigit(delimitedLine[i][0])) {
+	    tok->toktype = Type::NUMBER;
+	    tok->intval = stoi(delimitedLine[i]);
+	} else if (delimitedLine[i] == "+") {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::PLUS;
+	} else if (delimitedLine[i] == "-") {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::MINUS;
+	} else if (delimitedLine[i] == "*") {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::TIMES;
+	} else if ((delimitedLine[i] == "/")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::DIVIDE;
+	} else if ((delimitedLine[i] == "=")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::ASSIGN;
+	} else if ((delimitedLine[i] == "[")) {
+	    tok->toktype = Type::DELIMITER;
+	    tok->whichval = Which::LBRACKET;
+	} else if ((delimitedLine[i] == "]")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::RBRACKET;
+	} else if ((delimitedLine[i] == "(")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::LPAREN;
+	} else if ((delimitedLine[i] == ")")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::RPAREN;
+	} else if ((delimitedLine[i] == ",")) {
+	    tok->toktype = Type::OPERATOR;
+	    tok->whichval = Which::COMMA;
+	} else {
+	    tok->toktype = Type::IDENTIFIER;
+	    tok->stringval = delimitedLine[i];
+	}
+	tokenized[i] = tok;
+    }
+
+    if (DEBUG)
+	for (Token* tok : tokenized)
+	    cout << static_cast<int>(tok->toktype) << endl;
+    
+    return tokenized;
+}
+
+Token* parse (const vector<Token*>& tokenizedLine) {
+    Token* tok = new Token;
+ 
+    
+    return tok;
+}
 
 int main(int argc, char** argv) {
     // Defaults
@@ -341,15 +399,28 @@ int main(int argc, char** argv) {
 	cin.tie(&cout);	
     }
 
+    vector<Token*> instructions;
+
     string line;
-    vector<string> delimited;
-    Token parsedLine;
+    Token* parsed;
     while(!cin.eof()) {
 	getline(cin, line);
 
-	cout << line << endl;
+	if (DEBUG)
+	    cout << "Parsing line: " << line << endl;
+	
+	istringstream ss{line};
+	istream_iterator<string> begin{ss};
+	istream_iterator<string> end{};
+
+	vector<string> delimited{begin, end};
+
+	vector<Token*> tokenized = tokenize(delimited);
+	parsed = parse(tokenized);
+
+	instructions.push_back(parsed);
     }
-    
+
     return 0;
 }
 
