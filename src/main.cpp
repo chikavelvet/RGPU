@@ -1,4 +1,4 @@
-/* 
+/*
  * File:   main.cu
  * Author: treyr3
  *
@@ -7,12 +7,10 @@
 
 #include <cstdlib>
 #include <iostream>
-#include <pthread.h>
 #include <string>
 #include <cstdint>
 #include <vector>
 #include <atomic>
-#include <sys/sysinfo.h>
 #include <random>
 #include <time.h>
 #include <string.h>
@@ -23,6 +21,7 @@
 #include <iterator>
 #include <iomanip>
 #include <stack>
+#include <map>
 //#include <cuda_runtime.h>
 
 using namespace std;
@@ -45,14 +44,14 @@ struct Point;
 float* points;
 
 __global__ void d_findNearestClusters (float *dataset, float *clusters, int *pcmap, int num_points, int num_clusters, int dim) {
-    int index = threadIdx.x + blockIdx.x * blockDim.x;    
+    int index = threadIdx.x + blockIdx.x * blockDim.x;
 
     if (index < num_points) {
 	// For each point
-	
+
 	int nearestCluster = -1;
 	float nearestSQDistance;
-	
+
 	// For each cluster
 	for (int j = 0; j < num_clusters; ++j) {
 	    float sqdist = 0;
@@ -62,9 +61,9 @@ __global__ void d_findNearestClusters (float *dataset, float *clusters, int *pcm
 	    if (nearestCluster < 0 || sqdist < nearestSQDistance) {
 		nearestSQDistance = sqdist;
 		nearestCluster = j;
-	    }		    
+	    }
 	}
-	
+
 	pcmap[index] = nearestCluster;
     }
 }
@@ -74,15 +73,15 @@ __global__ void d_findNearestClusters_s (float *dataset, float *clusters, int *p
     int *nearestCluster = share;
     float *nearestSQDistance = (float*)&share[block_size];
     float *sqdist = (float*)&nearestSQDistance[block_size];
-    
-    int gindex = threadIdx.x + blockIdx.x * blockDim.x;    
+
+    int gindex = threadIdx.x + blockIdx.x * blockDim.x;
     int lindex = threadIdx.x;
-    
+
     if (gindex < num_points) {
 	// For each point
 
 	nearestCluster[lindex] = -1;
-	
+
 	// For each cluster
 	for (int j = 0; j < num_clusters; ++j) {
 	    sqdist[lindex] = 0;
@@ -92,9 +91,9 @@ __global__ void d_findNearestClusters_s (float *dataset, float *clusters, int *p
 	    if (nearestCluster[lindex] < 0 || sqdist[lindex] < nearestSQDistance[lindex]) {
 		nearestSQDistance[lindex] = sqdist[lindex];
 		nearestCluster[lindex] = j;
-	    }		    
+	    }
 	}
-	
+
 	pcmap[gindex] = nearestCluster[lindex];
     }
 }
@@ -117,7 +116,7 @@ struct KMeans {
     float* clusters;
     int* point_cluster_map;
     int* cluster_point_size;
-    
+
     KMeans(float* ds, int _num_points, int k, int _dim) :
 	dataset(ds),
 	num_clusters(k),
@@ -142,7 +141,7 @@ struct KMeans {
 		clusters[i * dim + j] = 0.0;
 
 	// For all points, add their values to the corresponding cluster
-	for (int p = 0; p < num_points; ++p) 
+	for (int p = 0; p < num_points; ++p)
 	    for (int j = 0; j < dim; ++j)
 		clusters[point_cluster_map[p] * dim + j] += dataset[p * dim + j] / cluster_point_size[point_cluster_map[p]];
     }
@@ -160,15 +159,15 @@ struct KMeans {
 	}
 	return maxdist <= THRESHOLD;
     }
-    
+
     void findNearestClusters () {
 	if (STEP == 1) {
 	    for (int index = 0; index < num_points; ++index) {
 		// For each point
-		
+
 		int nearestCluster = -1;
 		float nearestSQDistance;
-		
+
 		// For each cluster
 		for (int j = 0; j < num_clusters; ++j) {
 		    float sqdist = 0;
@@ -178,41 +177,41 @@ struct KMeans {
 		    if (nearestCluster < 0 || sqdist < nearestSQDistance) {
 			nearestSQDistance = sqdist;
 			nearestCluster = j;
-		    }		    
+		    }
 		}
-		
+
 		point_cluster_map[index] = nearestCluster;
 	    }
-	    
-	    
+
+
 	} else {
 	    float *d_dataset, *d_clusters;
 	    int *d_pcmap;//, *d_cpsize;
-	    
+
 	    cudaMalloc((void **)&d_dataset, num_points * dim * sizeof(float));
 	    cudaMalloc((void **)&d_clusters, num_clusters * dim * sizeof(float));
 	    cudaMalloc((void **)&d_pcmap, num_points * sizeof(int));
 	    //	    cudaMalloc((void **)&d_cpsize, num_clusters * sizeof(int));
-	    
+
 	    cudaMemcpy(d_dataset, dataset, num_points * dim * sizeof(float), cudaMemcpyHostToDevice);
 	    cudaMemcpy(d_clusters, clusters, num_clusters * dim * sizeof(float), cudaMemcpyHostToDevice);
-	    
+
 	    if (STEP == 2)
 		d_findNearestClusters<<<(num_points + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(d_dataset, d_clusters, d_pcmap, num_points, num_clusters, dim);
 	    else
 		d_findNearestClusters_s<<<(num_points + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK,
 		    THREADS_PER_BLOCK*sizeof(int) + 2*THREADS_PER_BLOCK*sizeof(float)>>>(d_dataset, d_clusters, d_pcmap, num_points, num_clusters, dim, THREADS_PER_BLOCK);
-	    
+
 	    cudaMemcpy(point_cluster_map, d_pcmap, num_points * sizeof(int), cudaMemcpyDeviceToHost);
-	    
-	    cudaFree(d_dataset); cudaFree(d_clusters);	    
+
+	    cudaFree(d_dataset); cudaFree(d_clusters);
 	    cudaFree(d_pcmap); //cudaFree(d_cpsize);
 	}
 
 	for (int j = 0; j < num_clusters; ++j)
 	    cluster_point_size[j] = 0;
-	    
-	for (int i = 0; i < num_points; ++i) 
+
+	for (int i = 0; i < num_points; ++i)
 	    cluster_point_size[point_cluster_map[i]] += 1;
     }
 
@@ -273,7 +272,7 @@ struct KMeans {
 	cudaEventSynchronize(stop);
 	float elapsed_msec = 0;
 	cudaEventElapsedTime(&elapsed_msec, start, stop);
-	
+
 	cout << "Converged in " << iterations << " iterations (max=" << ITERATIONS << ")" << endl;
 	cout << "parallel work completed in " << elapsed_msec << " msec" << endl;
 
@@ -284,7 +283,7 @@ struct KMeans {
 		    cout << "[" << fixed << setprecision(3) << clusters[i * dim + j] << "]";
 		cout << endl;
 	    }
-	
+
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
 
@@ -293,72 +292,198 @@ struct KMeans {
 };
 */
 
-enum struct Type { OPERATOR, NUMBER, IDENTIFIER, DELIMITER };
+const string type_str[] = { "operator", "number", "vector", "identifier", "delimiter" };
+enum struct Type { OPERATOR, NUMBER, VECTOR, IDENTIFIER, DELIMITER };
+const string which_str[] = { "+", "-", "*", "/", "=", "[", "]", "(", ")", "," };
 enum struct Which { PLUS, MINUS, TIMES, DIVIDE, ASSIGN, LBRACKET, RBRACKET, LPAREN, RPAREN, COMMA };
+/*map<Which, int> operator_precedence;
+operator_precedence[Which::ASSIGN] = 0;
+operator_precedence[Which::PLUS] = 1; operator_precedence[Which::MINUS] = 1;
+operator_precedence[Which::TIMES] = 2; operator_precedence[Which::DIVIDE] = 2;
+operator_precedence[Which::LBRACKET] = 10;*/
 
 struct Token {
     Type toktype;
     int intval;
     Which whichval;
     string stringval;
+    Token* operand;
+    Token* link;
 };
 
 vector<Token*> tokenize (const vector<string>& delimitedLine) {
     vector<Token*> tokenized(delimitedLine.size());
 
     for (int i = 0; i < delimitedLine.size(); ++i) {
-	Token* tok = new Token;
-	if (isdigit(delimitedLine[i][0])) {
-	    tok->toktype = Type::NUMBER;
-	    tok->intval = stoi(delimitedLine[i]);
-	} else if (delimitedLine[i] == "+") {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::PLUS;
-	} else if (delimitedLine[i] == "-") {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::MINUS;
-	} else if (delimitedLine[i] == "*") {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::TIMES;
-	} else if ((delimitedLine[i] == "/")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::DIVIDE;
-	} else if ((delimitedLine[i] == "=")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::ASSIGN;
-	} else if ((delimitedLine[i] == "[")) {
-	    tok->toktype = Type::DELIMITER;
-	    tok->whichval = Which::LBRACKET;
-	} else if ((delimitedLine[i] == "]")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::RBRACKET;
-	} else if ((delimitedLine[i] == "(")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::LPAREN;
-	} else if ((delimitedLine[i] == ")")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::RPAREN;
-	} else if ((delimitedLine[i] == ",")) {
-	    tok->toktype = Type::OPERATOR;
-	    tok->whichval = Which::COMMA;
-	} else {
-	    tok->toktype = Type::IDENTIFIER;
-	    tok->stringval = delimitedLine[i];
-	}
-	tokenized[i] = tok;
+      	Token* tok = new Token;
+      	if (isdigit(delimitedLine[i][0])) {
+      	    tok->toktype = Type::NUMBER;
+      	    tok->intval = stoi(delimitedLine[i]);
+      	} else if (delimitedLine[i] == "+") {
+      	    tok->toktype = Type::OPERATOR;
+      	    tok->whichval = Which::PLUS;
+      	} else if (delimitedLine[i] == "-") {
+      	    tok->toktype = Type::OPERATOR;
+      	    tok->whichval = Which::MINUS;
+      	} else if (delimitedLine[i] == "*") {
+      	    tok->toktype = Type::OPERATOR;
+      	    tok->whichval = Which::TIMES;
+      	} else if ((delimitedLine[i] == "/")) {
+      	    tok->toktype = Type::OPERATOR;
+      	    tok->whichval = Which::DIVIDE;
+      	} else if ((delimitedLine[i] == "=")) {
+      	    tok->toktype = Type::OPERATOR;
+      	    tok->whichval = Which::ASSIGN;
+      	} else if ((delimitedLine[i] == "[")) {
+      	    tok->toktype = Type::DELIMITER;
+      	    tok->whichval = Which::LBRACKET;
+      	} else if ((delimitedLine[i] == "]")) {
+      	    tok->toktype = Type::DELIMITER;
+      	    tok->whichval = Which::RBRACKET;
+      	} else if ((delimitedLine[i] == "(")) {
+      	    tok->toktype = Type::DELIMITER;
+      	    tok->whichval = Which::LPAREN;
+      	} else if ((delimitedLine[i] == ")")) {
+      	    tok->toktype = Type::DELIMITER;
+      	    tok->whichval = Which::RPAREN;
+      	} else if ((delimitedLine[i] == ",")) {
+      	    tok->toktype = Type::DELIMITER;
+      	    tok->whichval = Which::COMMA;
+      	} else {
+      	    tok->toktype = Type::IDENTIFIER;
+      	    tok->stringval = delimitedLine[i];
+      	}
+      	tokenized[i] = tok;
     }
 
     if (DEBUG)
-	for (Token* tok : tokenized)
-	    cout << static_cast<int>(tok->toktype) << endl;
-    
+  	for (Token* tok : tokenized)
+  	    cout << tok << " of type " << static_cast<int>(tok->toktype) << endl;
+
     return tokenized;
 }
 
-Token* parse (const vector<Token*>& tokenizedLine) {
-    Token* tok = new Token;
- 
-    
+int operator_precedence(Token* tok) {
+	switch (tok->whichval) {
+	case Which::ASSIGN:
+		return 0; break;
+	case Which::PLUS:
+	case Which::MINUS:
+		return 1; break;
+	case Which::TIMES:
+	case Which::DIVIDE:
+		return 2; break;
+	case Which::LBRACKET:
+		return 10; break;
+	}
+	return -1;
+}
+
+string printtok(Token* tok) {
+	stringstream ss;
+	switch (tok->toktype) {
+	case Type::OPERATOR:
+		ss << "(" << which_str[static_cast<int>(tok->whichval)] << " " << printtok(tok->operand) << " " << printtok(tok->operand->link) << ")";
+		break;
+	case Type::DELIMITER:
+		ss << which_str[static_cast<int>(tok->whichval)];
+		break;
+	case Type::IDENTIFIER:
+		return tok->stringval;
+	case Type::NUMBER:
+		ss << tok->intval;
+		break;
+	case Type::VECTOR:
+		Token * it = tok->operand;
+		ss << "[" << it->intval;
+		it = it->link;
+		while (it != NULL) {
+			ss << ", " << it->intval;
+			it = it->link;
+		}
+		ss << "]";
+		break;
+	}
+	return ss.str();
+}
+
+Token* parse(const vector<Token*>& tokenizedLine) {
+	Token* tok = new Token;
+
+	stack<Token*> operators;
+	stack<Token*> operands;
+
+	//shift-reduce strategy
+	int deb = 0;
+	for (Token* t : tokenizedLine) {
+		cout << "Parsing token " << ++deb << " with type " << static_cast<int>(t->toktype) << " ";
+		if (t->toktype == Type::OPERATOR || t->toktype == Type::DELIMITER)
+			cout << "(which: " << static_cast<int>(t->whichval) << ")";
+		cout << endl;
+
+		if (t->toktype != Type::OPERATOR && t->toktype != Type::DELIMITER) {
+			operands.push(t);
+		}
+		else {
+			if (operators.empty()) {
+				operators.push(t);
+				continue;
+			}
+
+			if (t->whichval == Which::COMMA)
+				continue;
+
+			if (t->whichval == Which::LBRACKET) {
+				operands.push(t);
+				continue;
+			}
+
+			if (t->whichval == Which::RBRACKET) {
+				while (!operands.empty()) {
+					cout << "Reducing bracket, top: " << printtok(operands.top()) << endl;
+					Token* rest = operands.top(); operands.pop();
+					Token* first = operands.top();
+
+					if (first->toktype == Type::DELIMITER && first->whichval == Which::LBRACKET) {
+						first->toktype = Type::VECTOR;
+						first->operand = rest;
+						break;
+					}
+					
+					first->link = rest;
+				}
+
+				continue;
+			}
+
+			while (!operators.empty() && operator_precedence(t) <= operator_precedence(operators.top())) {
+				Token* op = operators.top(); operators.pop();
+				Token* rhs = operands.top(); operands.pop();
+				Token* lhs = operands.top(); operands.pop();
+				op->operand = rhs;
+				rhs->link = lhs;
+				operands.push(op);
+			}
+
+			operators.push(t);
+		}
+	}
+
+	while (!operators.empty()) {
+		Token* op = operators.top(); operators.pop();
+		Token* rhs = operands.top(); operands.pop();
+		Token* lhs = operands.top(); operands.pop();
+		op->operand = rhs;
+		rhs->link = lhs;
+		operands.push(op);
+	}
+	
+	cout << "Final: ";
+	while (!operands.empty()) {
+		cout << printtok(operands.top()) << endl;
+		operands.pop();
+	}
+
     return tok;
 }
 
@@ -373,7 +498,7 @@ int main(int argc, char** argv) {
     STEP = 3;
     THREADS_PER_BLOCK = 256;
     */
-    
+
     for (int i = 1; i < argc; ++i) {
 	if (STREQ(argv[i], "--input")) {
 	    INPUT = argv[++i];
@@ -386,7 +511,7 @@ int main(int argc, char** argv) {
 
     if (DEBUG)
       cout << "Input: " << INPUT << endl;
-        
+
     srand(time(NULL));
 
     // Parse input
@@ -396,7 +521,7 @@ int main(int argc, char** argv) {
     if (INPUT != NULL) {
 	input.open(INPUT, ifstream::in);
 	orig_cin = cin.rdbuf(input.rdbuf());
-	cin.tie(&cout);	
+	cin.tie(&cout);
     }
 
     vector<Token*> instructions;
@@ -404,23 +529,22 @@ int main(int argc, char** argv) {
     string line;
     Token* parsed;
     while(!cin.eof()) {
-	getline(cin, line);
+		getline(cin, line);
 
-	if (DEBUG)
-	    cout << "Parsing line: " << line << endl;
-	
-	istringstream ss{line};
-	istream_iterator<string> begin{ss};
-	istream_iterator<string> end{};
+		if (DEBUG)
+			cout << "Parsing line: " << line << endl;
 
-	vector<string> delimited{begin, end};
+		istringstream ss{line};
+		istream_iterator<string> begin{ss};
+		istream_iterator<string> end{};
 
-	vector<Token*> tokenized = tokenize(delimited);
-	parsed = parse(tokenized);
+		vector<string> delimited{begin, end};
 
-	instructions.push_back(parsed);
+		vector<Token*> tokenized = tokenize(delimited);
+		parsed = parse(tokenized);
+
+		//instructions.push_back(parsed);
     }
 
     return 0;
 }
-
