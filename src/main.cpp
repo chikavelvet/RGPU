@@ -356,9 +356,9 @@ vector<Token*> tokenize (const vector<string>& delimitedLine) {
       	tokenized[i] = tok;
     }
 
-    if (DEBUG)
-  	for (Token* tok : tokenized)
-  	    cout << tok << " of type " << static_cast<int>(tok->toktype) << endl;
+    // if (DEBUG)
+  	//  	for (Token* tok : tokenized)
+  	//  		cout << tok << " of type " << static_cast<int>(tok->toktype) << endl;
 
     return tokenized;
 }
@@ -408,18 +408,16 @@ string printtok(Token* tok) {
 }
 
 Token* parse(const vector<Token*>& tokenizedLine) {
-	Token* tok = new Token;
-
 	stack<Token*> operators;
 	stack<Token*> operands;
 
 	//shift-reduce strategy
 	int deb = 0;
 	for (Token* t : tokenizedLine) {
-		cout << "Parsing token " << ++deb << " with type " << static_cast<int>(t->toktype) << " ";
-		if (t->toktype == Type::OPERATOR || t->toktype == Type::DELIMITER)
-			cout << "(which: " << static_cast<int>(t->whichval) << ")";
-		cout << endl;
+		// cout << "Parsing token " << ++deb << " with type " << static_cast<int>(t->toktype) << " ";
+		// if (t->toktype == Type::OPERATOR || t->toktype == Type::DELIMITER)
+		//   	cout << "(which: " << static_cast<int>(t->whichval) << ")";
+		// cout << endl;
 
 		if (t->toktype != Type::OPERATOR && t->toktype != Type::DELIMITER) {
 			operands.push(t);
@@ -440,7 +438,7 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 
 			if (t->whichval == Which::RBRACKET) {
 				while (!operands.empty()) {
-					cout << "Reducing bracket, top: " << printtok(operands.top()) << endl;
+					// cout << "Reducing bracket, top: " << printtok(operands.top()) << endl;
 					Token* rest = operands.top(); operands.pop();
 					Token* first = operands.top();
 
@@ -478,13 +476,13 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 		operands.push(op);
 	}
 	
-	cout << "Final: ";
-	while (!operands.empty()) {
-		cout << printtok(operands.top()) << endl;
-		operands.pop();
-	}
+	cout << "Final: " << endl;
+	if (!operands.empty())
+		cout << "    " << printtok(operands.top()) << endl;
+	else
+		cout << "Uh oh" << endl;
 
-    return tok;
+    return operands.top();
 }
 
 int main(int argc, char** argv) {
@@ -530,6 +528,8 @@ int main(int argc, char** argv) {
     Token* parsed;
     while(!cin.eof()) {
 		getline(cin, line);
+
+		if (line == "") continue;
 
 		if (DEBUG)
 			cout << "Parsing line: " << line << endl;
