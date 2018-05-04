@@ -292,10 +292,10 @@ struct KMeans {
 };
 */
 
-const string type_str[] = { "operator", "number", "vector", "identifier", "delimiter" };
-enum struct Type { OPERATOR, NUMBER, VECTOR, IDENTIFIER, DELIMITER };
-const string which_str[] = { "+", "-", "*", "/", "=", "[", "]", "(", ")", "," };
-enum struct Which { PLUS, MINUS, TIMES, DIVIDE, ASSIGN, LBRACKET, RBRACKET, LPAREN, RPAREN, COMMA };
+const string type_str[] = { "operator", "number", "vector", "identifier", "delimiter", "function" };
+enum struct Type { OPERATOR, NUMBER, VECTOR, IDENTIFIER, DELIMITER, FUNCTION };
+const string which_str[] = { "+", "-", "*", "/", "=", "[", "]", "(", ")", ",", "sum", "mean", "median", "min", "max", "variance", "stdev", "print" };
+enum struct Which { PLUS, MINUS, TIMES, DIVIDE, ASSIGN, LBRACKET, RBRACKET, LPAREN, RPAREN, COMMA, SUM, MEAN, MEDIAN, MIN, MAX, VARIANCE, STDEV, PRINT };
 /*map<Which, int> operator_precedence;
 operator_precedence[Which::ASSIGN] = 0;
 operator_precedence[Which::PLUS] = 1; operator_precedence[Which::MINUS] = 1;
@@ -317,9 +317,9 @@ map<string, Token*> symbol_table;
 vector<Token*> tokenize (const vector<string>& delimitedLine) {
     vector<Token*> tokenized(delimitedLine.size());
 
-    for (int i = 0; i < delimitedLine.size(); ++i) {
-      	Token* tok = new Token;
-      	if (isdigit(delimitedLine[i][0])) {
+	for (int i = 0; i < delimitedLine.size(); ++i) {
+		Token* tok = new Token;
+		if (isdigit(delimitedLine[i][0])) {
       	    tok->toktype = Type::NUMBER;
       	    tok->intval = stoi(delimitedLine[i]);
       	} else if (delimitedLine[i] == "+") {
@@ -353,9 +353,55 @@ vector<Token*> tokenize (const vector<string>& delimitedLine) {
       	    tok->toktype = Type::DELIMITER;
       	    tok->whichval = Which::COMMA;
       	} else {
-      	    tok->toktype = Type::IDENTIFIER;
-      	    tok->stringval = delimitedLine[i];
-      	}
+			bool func = false;
+			if (delimitedLine[i].length() > 2) {
+				if (delimitedLine[i] == "sum") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::SUM;
+					func = true;
+				}
+				else if (delimitedLine[i] == "mean") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::MEAN;
+					func = true;
+				}
+				else if (delimitedLine[i] == "median") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::MEDIAN;
+					func = true;
+				}
+				else if (delimitedLine[i] == "min") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::MIN;
+					func = true;
+				}
+				else if (delimitedLine[i] == "max") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::MAX;
+					func = true;
+				}
+				else if (delimitedLine[i] == "variance") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::VARIANCE;
+					func = true;
+				}
+				else if (delimitedLine[i] == "stdev"){
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::STDEV;
+					func = true;
+				}
+				else if (delimitedLine[i] == "print") {
+					tok->toktype = Type::FUNCTION;
+					tok->whichval = Which::PRINT;
+					func = true;
+				}
+			}
+
+			if (!func) {
+				tok->toktype = Type::IDENTIFIER;
+				tok->stringval = delimitedLine[i];
+			}
+		}
       	tokenized[i] = tok;
     }
 
@@ -402,18 +448,13 @@ string printtok(Token* tok) {
 		ss << tok->intval;
 		break;
 	case Type::VECTOR:
-		/*Token * it = tok->operand;
-		ss << "[" << it->intval;
-		it = it->link;
-		while (it != NULL) {
-			ss << ", " << it->intval;
-			it = it->link;
-		}
-		ss << "]";*/
 		ss << "[" << tok->vecval[0];
 		for (int i = 1; i < tok->intval; ++i)
 			ss << ", " << tok->vecval[i];
 		ss << "]";
+		break;
+	case Type::FUNCTION:
+		ss << "(" << which_str[static_cast<int>(tok->whichval)] << " " << printtok(tok->operand) << ")";
 		break;
 	}
 	return ss.str();
@@ -438,7 +479,7 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 		//   	cout << "(which: " << static_cast<int>(t->whichval) << ")";
 		// cout << endl;
 
-		if (t->toktype != Type::OPERATOR && t->toktype != Type::DELIMITER) {
+		if (t->toktype != Type::OPERATOR && t->toktype != Type::DELIMITER && t->toktype != Type::FUNCTION) {
 			operands.push(t);
 		}
 		else {
@@ -478,9 +519,24 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 					first->link = rest;
 					++len;
 				}
+				
+				continue;
+			}
 
-				cout << "Length: " << len << endl;
+			if (t->toktype == Type::FUNCTION) {
+				operators.push(t);
+				continue;
+			}
 
+			if (t->toktype == Type::DELIMITER && t->whichval == Which::LPAREN) {
+				continue;
+			}
+
+			if (t->toktype == Type::DELIMITER && t->whichval == Which::RPAREN) {
+				Token* func = operators.top(); operators.pop();
+				Token* arg = operands.top(); operands.pop();
+				func->operand = arg;
+				operands.push(func);
 				continue;
 			}
 
@@ -708,11 +764,24 @@ Token* evaluate_arith_serial(Token* root) {
 	return NULL;
 }
 
+
+inline void func_print(Token* arg) {
+	cout << printtok(evaluate_expr_tree(arg)) << endl;
+}
+
+Token* evaluate_function_serial(Token* root) {
+	switch (root->whichval) {
+	case Which::PRINT:
+		func_print(root->operand);
+		break;
+	}
+	return NULL;
+}
+
 Token* evaluate_expr_tree(Token* root) {
 	if (root == NULL)
 		return NULL;
 
-	Token * tok = new Token;
 	switch (root->toktype) {
 	case Type::NUMBER:
 	case Type::VECTOR:
@@ -720,37 +789,27 @@ Token* evaluate_expr_tree(Token* root) {
 	case Type::IDENTIFIER:
 		return symbol_table[root->stringval];
 	case Type::OPERATOR:
-		switch (root->whichval) {
-		case Which::ASSIGN:
+		if (root->whichval == Which::ASSIGN)
 			symbol_table[root->operand->stringval] = evaluate_expr_tree(root->operand->link);
-			break;
-		case Which::PLUS:
+		else 
 			return evaluate_arith_serial(root);
-		case Which::MINUS:
-			tok->toktype = Type::NUMBER;
-			tok->intval = evaluate_expr_tree(root->operand)->intval - evaluate_expr_tree(root->operand->link)->intval;
-			return tok;
-		case Which::TIMES:
-			tok->toktype = Type::NUMBER;
-			tok->intval = evaluate_expr_tree(root->operand)->intval * evaluate_expr_tree(root->operand->link)->intval;
-			return tok;
-		case Which::DIVIDE:
-			tok->toktype = Type::NUMBER;
-			tok->intval = evaluate_expr_tree(root->operand)->intval / evaluate_expr_tree(root->operand->link)->intval;
-			return tok;
-		}
-		break;
+	case Type::FUNCTION:
+		return evaluate_function_serial(root);
 	}
-	delete(tok);
+
 	return NULL;
 }
 
 void execute_instruction(Token* inst) {
 	cout << "Executing instruction " << printtok(inst) << endl;
-	if (evaluate_expr_tree(inst) != NULL)
-		cerr << "WARNING: instruction evaluation result non-null" << endl;
-	cout << "Symbol table: " << endl;
-	cout << printsymtab();
+	Token* result;
+	if ((result = evaluate_expr_tree(inst)) != NULL)
+		cerr << "WARNING: instruction evaluation result non-null : " << printtok(result) << endl;
+	
+	if (DEBUG) {
+		cout << "Symbol table: " << endl;
+		cout << printsymtab();
+	}
 }
 
 int main(int argc, char** argv) {
