@@ -30,7 +30,7 @@ using namespace std;
 #define SQR(x) ((x)*(x))
 
 char* INPUT;
-bool DEBUG;
+bool DEBUG, SERIAL;
 
 /*
 int CLUSTERS, ITERATIONS, WORKERS, STEP, THREADS_PER_BLOCK;
@@ -305,11 +305,14 @@ operator_precedence[Which::LBRACKET] = 10;*/
 struct Token {
     Type toktype;
     int intval;
-    Which whichval;
+	int* vecval;
+	Which whichval;
     string stringval;
     Token* operand;
     Token* link;
 };
+
+map<string, Token*> symbol_table;
 
 vector<Token*> tokenize (const vector<string>& delimitedLine) {
     vector<Token*> tokenized(delimitedLine.size());
@@ -381,6 +384,11 @@ int operator_precedence(Token* tok) {
 
 string printtok(Token* tok) {
 	stringstream ss;
+
+	if (tok == NULL) {
+		return "NULL";
+	}
+
 	switch (tok->toktype) {
 	case Type::OPERATOR:
 		ss << "(" << which_str[static_cast<int>(tok->whichval)] << " " << printtok(tok->operand) << " " << printtok(tok->operand->link) << ")";
@@ -394,16 +402,27 @@ string printtok(Token* tok) {
 		ss << tok->intval;
 		break;
 	case Type::VECTOR:
-		Token * it = tok->operand;
+		/*Token * it = tok->operand;
 		ss << "[" << it->intval;
 		it = it->link;
 		while (it != NULL) {
 			ss << ", " << it->intval;
 			it = it->link;
 		}
+		ss << "]";*/
+		ss << "[" << tok->vecval[0];
+		for (int i = 1; i < tok->intval; ++i)
+			ss << ", " << tok->vecval[i];
 		ss << "]";
 		break;
 	}
+	return ss.str();
+}
+
+string printsymtab(void) {
+	stringstream ss;
+	for (auto entry : symbol_table) 
+		ss << entry.first << ": " << printtok(entry.second) << endl;
 	return ss.str();
 }
 
@@ -437,6 +456,7 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 			}
 
 			if (t->whichval == Which::RBRACKET) {
+				int len = 0;
 				while (!operands.empty()) {
 					// cout << "Reducing bracket, top: " << printtok(operands.top()) << endl;
 					Token* rest = operands.top(); operands.pop();
@@ -444,20 +464,30 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 
 					if (first->toktype == Type::DELIMITER && first->whichval == Which::LBRACKET) {
 						first->toktype = Type::VECTOR;
-						first->operand = rest;
+						int* vecval = (int*)malloc(++len * sizeof(int));
+						Token* it = rest;
+						for (int i = 0; i < len; ++i) {
+							vecval[i] = rest->intval;
+							rest = rest->link;
+						}
+						first->vecval = vecval;
+						first->intval = len;
 						break;
 					}
 					
 					first->link = rest;
+					++len;
 				}
+
+				cout << "Length: " << len << endl;
 
 				continue;
 			}
 
 			while (!operators.empty() && operator_precedence(t) <= operator_precedence(operators.top())) {
 				Token* op = operators.top(); operators.pop();
-				Token* rhs = operands.top(); operands.pop();
 				Token* lhs = operands.top(); operands.pop();
+				Token* rhs = operands.top(); operands.pop();
 				op->operand = rhs;
 				rhs->link = lhs;
 				operands.push(op);
@@ -469,20 +499,258 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 
 	while (!operators.empty()) {
 		Token* op = operators.top(); operators.pop();
-		Token* rhs = operands.top(); operands.pop();
 		Token* lhs = operands.top(); operands.pop();
+		Token* rhs = operands.top(); operands.pop();
 		op->operand = rhs;
 		rhs->link = lhs;
 		operands.push(op);
 	}
 	
-	cout << "Final: " << endl;
+	/*cout << "Final: " << endl;
 	if (!operands.empty())
 		cout << "    " << printtok(operands.top()) << endl;
 	else
-		cout << "Uh oh" << endl;
+		cout << "Uh oh" << endl;*/
 
     return operands.top();
+}
+
+inline int ssplus(int  lhs, int  rhs) { return lhs + rhs;  }
+int* vsplus(int* lhs, int  rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL) 
+		for (int i = 0; i < size; ++i) 
+			ret[i] = lhs[i] + rhs;
+	return ret;
+}
+#define svplus(lhs, rhs, size) (vsplus(rhs,lhs,size))
+int* vvplus(int* lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] + rhs[i];
+	return ret;
+}
+
+inline int ssminus(int  lhs, int  rhs) { return lhs - rhs; }
+int* vsminus(int* lhs, int  rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] - rhs;
+	return ret;
+}
+int* svminus(int  lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs - rhs[i];
+	return ret;
+}
+int* vvminus(int* lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] - rhs[i];
+	return ret;
+}
+
+inline int sstimes(int  lhs, int  rhs) { return lhs * rhs; }
+int* vstimes(int* lhs, int  rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] * rhs;
+	return ret;
+}
+#define svtimes(lhs, rhs, size) (vstimes(rhs,lhs,size))
+int* vvtimes(int* lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] * rhs[i];
+	return ret;
+}
+
+inline int ssdivide(int  lhs, int  rhs) { return lhs / rhs; }
+int* vsdivide(int* lhs, int  rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] / rhs;
+	return ret;
+}
+int* svdivide(int  lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs / rhs[i];
+	return ret;
+}
+int* vvdivide(int* lhs, int* rhs, int size) {
+	int* ret = (int*)malloc(size * sizeof(int));
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			ret[i] = lhs[i] / rhs[i];
+	return ret;
+}
+
+
+Token* eval_plus(Token* lhs, Token* rhs) {
+	Token * tok = new Token;
+	if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::NUMBER) {
+		tok->toktype = Type::NUMBER;
+		tok->intval = ssplus(lhs->intval, rhs->intval);
+	} else {
+		tok->toktype = Type::VECTOR;
+		if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::VECTOR) {
+			tok->intval = lhs->intval;
+			tok->vecval = vvplus(lhs->vecval, rhs->vecval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::NUMBER) {
+			tok->intval = lhs->intval;
+			tok->vecval = vsplus(lhs->vecval, rhs->intval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::VECTOR) {
+			tok->intval = rhs->intval;
+			tok->vecval = svplus(lhs->intval, rhs->vecval, rhs->intval);
+		}
+	}
+	return tok;
+}
+
+Token* eval_minus(Token* lhs, Token* rhs) {
+	Token * tok = new Token;
+	if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::NUMBER) {
+		tok->toktype = Type::NUMBER;
+		tok->intval = ssminus(lhs->intval, rhs->intval);
+	}
+	else {
+		tok->toktype = Type::VECTOR;
+		if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::VECTOR) {
+			tok->intval = lhs->intval;
+			tok->vecval = vvminus(lhs->vecval, rhs->vecval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::NUMBER) {
+			tok->intval = lhs->intval;
+			tok->vecval = vsminus(lhs->vecval, rhs->intval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::VECTOR) {
+			tok->intval = rhs->intval;
+			tok->vecval = svminus(lhs->intval, rhs->vecval, rhs->intval);
+		}
+	}
+	return tok;
+}
+
+Token* eval_times(Token* lhs, Token* rhs) {
+	Token * tok = new Token;
+	if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::NUMBER) {
+		tok->toktype = Type::NUMBER;
+		tok->intval = sstimes(lhs->intval, rhs->intval);
+	}
+	else {
+		tok->toktype = Type::VECTOR;
+		if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::VECTOR) {
+			tok->intval = lhs->intval;
+			tok->vecval = vvtimes(lhs->vecval, rhs->vecval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::NUMBER) {
+			tok->intval = lhs->intval;
+			tok->vecval = vstimes(lhs->vecval, rhs->intval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::VECTOR) {
+			tok->intval = rhs->intval;
+			tok->vecval = svtimes(lhs->intval, rhs->vecval, rhs->intval);
+		}
+	}
+	return tok;
+}
+
+Token* eval_divide(Token* lhs, Token* rhs) {
+	Token * tok = new Token;
+	if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::NUMBER) {
+		tok->toktype = Type::NUMBER;
+		tok->intval = ssdivide(lhs->intval, rhs->intval);
+	}
+	else {
+		tok->toktype = Type::VECTOR;
+		if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::VECTOR) {
+			tok->intval = lhs->intval;
+			tok->vecval = vvdivide(lhs->vecval, rhs->vecval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::VECTOR && rhs->toktype == Type::NUMBER) {
+			tok->intval = lhs->intval;
+			tok->vecval = vsdivide(lhs->vecval, rhs->intval, lhs->intval);
+		}
+		else if (lhs->toktype == Type::NUMBER && rhs->toktype == Type::VECTOR) {
+			tok->intval = rhs->intval;
+			tok->vecval = svdivide(lhs->intval, rhs->vecval, rhs->intval);
+		}
+	}
+	return tok;
+}
+
+Token* evaluate_expr_tree(Token* root);
+
+Token* evaluate_arith_serial(Token* root) {
+	switch (root->whichval) {
+	case Which::PLUS:
+		return eval_plus(evaluate_expr_tree(root->operand), evaluate_expr_tree(root->operand->link));
+	case Which::MINUS:
+		return eval_minus(evaluate_expr_tree(root->operand), evaluate_expr_tree(root->operand->link));
+	case Which::TIMES:
+		return eval_times(evaluate_expr_tree(root->operand), evaluate_expr_tree(root->operand->link));
+	case Which::DIVIDE:
+		return eval_divide(evaluate_expr_tree(root->operand), evaluate_expr_tree(root->operand->link));
+	}
+
+	return NULL;
+}
+
+Token* evaluate_expr_tree(Token* root) {
+	if (root == NULL)
+		return NULL;
+
+	Token * tok = new Token;
+	switch (root->toktype) {
+	case Type::NUMBER:
+	case Type::VECTOR:
+		return root;
+	case Type::IDENTIFIER:
+		return symbol_table[root->stringval];
+	case Type::OPERATOR:
+		switch (root->whichval) {
+		case Which::ASSIGN:
+			symbol_table[root->operand->stringval] = evaluate_expr_tree(root->operand->link);
+			break;
+		case Which::PLUS:
+			return evaluate_arith_serial(root);
+		case Which::MINUS:
+			tok->toktype = Type::NUMBER;
+			tok->intval = evaluate_expr_tree(root->operand)->intval - evaluate_expr_tree(root->operand->link)->intval;
+			return tok;
+		case Which::TIMES:
+			tok->toktype = Type::NUMBER;
+			tok->intval = evaluate_expr_tree(root->operand)->intval * evaluate_expr_tree(root->operand->link)->intval;
+			return tok;
+		case Which::DIVIDE:
+			tok->toktype = Type::NUMBER;
+			tok->intval = evaluate_expr_tree(root->operand)->intval / evaluate_expr_tree(root->operand->link)->intval;
+			return tok;
+		}
+		break;
+	}
+	delete(tok);
+	return NULL;
+}
+
+void execute_instruction(Token* inst) {
+	cout << "Executing instruction " << printtok(inst) << endl;
+	if (evaluate_expr_tree(inst) != NULL)
+		cerr << "WARNING: instruction evaluation result non-null" << endl;
+	cout << "Symbol table: " << endl;
+	cout << printsymtab();
 }
 
 int main(int argc, char** argv) {
@@ -498,13 +766,16 @@ int main(int argc, char** argv) {
     */
 
     for (int i = 1; i < argc; ++i) {
-	if (STREQ(argv[i], "--input")) {
-	    INPUT = argv[++i];
-	} else if (STREQ(argv[i], "--debug")) {
-	    DEBUG = true;
-	} else {
-	    cout << "Unknown parameter: " << argv[i] << endl;
-	}
+		if (STREQ(argv[i], "--input")) {
+			INPUT = argv[++i];
+		} else if (STREQ(argv[i], "--debug")) {
+			DEBUG = true;
+		} else if (STREQ(argv[i], "--serial")) {
+			SERIAL = true;
+		}
+		else {
+			cout << "Unknown parameter: " << argv[i] << endl;
+		}
     }
 
     if (DEBUG)
@@ -543,8 +814,18 @@ int main(int argc, char** argv) {
 		vector<Token*> tokenized = tokenize(delimited);
 		parsed = parse(tokenized);
 
-		//instructions.push_back(parsed);
+		instructions.push_back(parsed);
     }
 
+	if (DEBUG) {
+		cout << "Parsed instructions:" << endl;
+		for (Token* i : instructions)
+			cout << "    " << printtok(i) << endl;
+	}
+
+	for (Token* inst : instructions)
+		execute_instruction(inst);
+
+	cout << "Done." << endl;
     return 0;
 }
