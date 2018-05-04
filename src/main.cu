@@ -22,7 +22,7 @@
 #include <iomanip>
 #include <stack>
 #include <map>
-//#include <cuda_runtime.h>
+#include <cuda_runtime.h>
 
 using namespace std;
 
@@ -31,6 +31,7 @@ using namespace std;
 
 char* INPUT;
 bool DEBUG, SERIAL;
+int THREADS_PER_BLOCK;
 
 /*
 int CLUSTERS, ITERATIONS, WORKERS, STEP, THREADS_PER_BLOCK;
@@ -571,20 +572,67 @@ Token* parse(const vector<Token*>& tokenizedLine) {
     return operands.top();
 }
 
-inline int ssplus(int  lhs, int  rhs) { return lhs + rhs;  }
+__global__ void d_vsplus (int* lhs, int rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] + rhs;
+}
+
+__global__ void d_vvplus(int* lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] + rhs[index];
+}
+
+inline int ssplus(int  lhs, int  rhs) { return lhs + rhs; }
 int* vsplus(int* lhs, int  rhs, int size) {
 	int* ret = (int*)malloc(size * sizeof(int));
 	if (SERIAL) 
 		for (int i = 0; i < size; ++i) 
 			ret[i] = lhs[i] + rhs;
+	else {
+		int *d_lhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vsplus<<<(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(d_lhs, rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 #define svplus(lhs, rhs, size) (vsplus(rhs,lhs,size))
 int* vvplus(int* lhs, int* rhs, int size) {
 	int* ret = (int*)malloc(size * sizeof(int));
+
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] + rhs[i];
+	else {
+		int *d_lhs, *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vvplus<<<(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK>>>(d_lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
+
 	return ret;
 }
 
@@ -749,7 +797,7 @@ Token* eval_divide(Token* lhs, Token* rhs) {
 
 Token* evaluate_expr_tree(Token* root);
 
-Token* evaluate_arith_serial(Token* root) {
+Token* evaluate_arith(Token* root) {
 	switch (root->whichval) {
 	case Which::PLUS:
 		return eval_plus(evaluate_expr_tree(root->operand), evaluate_expr_tree(root->operand->link));
@@ -765,15 +813,88 @@ Token* evaluate_arith_serial(Token* root) {
 }
 
 
-inline void func_print(Token* arg) {
-	cout << printtok(evaluate_expr_tree(arg)) << endl;
+inline void func_print(Token* root) {
+	cout << printtok(root) << endl;
 }
 
-Token* evaluate_function_serial(Token* root) {
+int func_sum(int* vec, int size) {
+	int sum = 0;
+	if (SERIAL) 
+		for (int i = 0; i < size; ++i) 
+			sum += vec[i];
+	
+	return sum;
+}
+
+Token* eval_sum(Token* arg) {
+	Token * tok = new Token;
+	tok->toktype = Type::NUMBER;
+	tok->intval = func_sum(arg->vecval, arg->intval);
+	return tok;
+}
+
+/*void swap(int* lhs, int* rhs) {
+	int tmp = *rhs;
+	*rhs = *lhs;
+	*lhs = tmp;
+}*/
+
+/* partition and kthSmallest functions used for Quickselect method of finding median, 
+   code courtesy of https://www.geeksforgeeks.org/quickselect-algorithm/ */
+int partition(int arr[], int l, int r) {
+	int x = arr[r], i = 1;
+
+	for (int j = l; j < r; ++j) {
+		if (arr[j] <= x) {
+			swap(arr[i], arr[j]);
+			++i;
+		}
+	}
+
+	swap(arr[i], arr[r]);
+	return i;
+}
+
+int kthSmallest(int arr[], int l, int r, int k) {
+	if (k > 0 && k <= r - l + 1) {
+		int index = partition(arr, l, r);
+		
+		if (index - l == k - 1)
+			return arr[index];
+
+		if (index - l > k - 1)
+			return kthSmallest(arr, l, index - 1, k);
+
+		return kthSmallest(arr, index + 1, r, k - index + l - 1);
+	}
+
+	return INT_MAX;
+}
+
+int func_median(int* vec, int size) {
+	if (SERIAL) {
+		int k = size / 2;
+		return kthSmallest(vec, 0, size - 1, k);
+	}
+	return 0;
+}
+
+Token* eval_median(Token* arg) {
+	Token* tok = new Token;
+	tok->toktype = Type::NUMBER;
+	tok->intval = func_median(arg->vecval, arg->intval);
+	return tok;
+}
+
+Token* evaluate_function(Token* root) {
 	switch (root->whichval) {
 	case Which::PRINT:
-		func_print(root->operand);
+		func_print(evaluate_expr_tree(root->operand));
 		break;
+	case Which::SUM:
+		return eval_sum(evaluate_expr_tree(root->operand));
+	case Which::MEDIAN:
+		return eval_median(evaluate_expr_tree(root->operand));
 	}
 	return NULL;
 }
@@ -792,9 +913,9 @@ Token* evaluate_expr_tree(Token* root) {
 		if (root->whichval == Which::ASSIGN)
 			symbol_table[root->operand->stringval] = evaluate_expr_tree(root->operand->link);
 		else 
-			return evaluate_arith_serial(root);
+			return evaluate_arith(root);
 	case Type::FUNCTION:
-		return evaluate_function_serial(root);
+		return evaluate_function(root);
 	}
 
 	return NULL;
@@ -821,8 +942,8 @@ int main(int argc, char** argv) {
     CLUSTERS = 0;
     WORKERS = 1;
     STEP = 3;
-    THREADS_PER_BLOCK = 256;
     */
+    THREADS_PER_BLOCK = 256;
 
     for (int i = 1; i < argc; ++i) {
 		if (STREQ(argv[i], "--input")) {
