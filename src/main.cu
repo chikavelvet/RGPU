@@ -413,21 +413,15 @@ vector<Token*> tokenize (const vector<string>& delimitedLine) {
     return tokenized;
 }
 
-int operator_precedence(Token* tok) {
-	switch (tok->whichval) {
-	case Which::ASSIGN:
-		return 0; break;
-	case Which::PLUS:
-	case Which::MINUS:
-		return 1; break;
-	case Which::TIMES:
-	case Which::DIVIDE:
-		return 2; break;
-	case Which::LBRACKET:
-		return 10; break;
-	}
-	return -1;
-}
+map<Which, int> operator_precedence_map = { 
+	{Which::ASSIGN, 0}, 
+	{Which::PLUS, 1}, 
+	{Which::MINUS, 1},
+	{Which::TIMES, 2},
+	{Which::DIVIDE, 2},
+	{Which::LBRACKET, 10} };
+
+int operator_precedence(Token* tok) { return operator_precedence_map[tok->whichval]; }
 
 string printtok(Token* tok) {
 	stringstream ss;
@@ -473,7 +467,7 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 	stack<Token*> operands;
 
 	//shift-reduce strategy
-	int deb = 0;
+	// int deb = 0;
 	for (Token* t : tokenizedLine) {
 		// cout << "Parsing token " << ++deb << " with type " << static_cast<int>(t->toktype) << " ";
 		// if (t->toktype == Type::OPERATOR || t->toktype == Type::DELIMITER)
@@ -507,7 +501,7 @@ Token* parse(const vector<Token*>& tokenizedLine) {
 					if (first->toktype == Type::DELIMITER && first->whichval == Which::LBRACKET) {
 						first->toktype = Type::VECTOR;
 						int* vecval = (int*)malloc(++len * sizeof(int));
-						Token* it = rest;
+						// Token* it = rest;
 						for (int i = 0; i < len; ++i) {
 							vecval[i] = rest->intval;
 							rest = rest->link;
@@ -577,11 +571,50 @@ __global__ void d_vsplus (int* lhs, int rhs, int size, int* ret) {
 	if (index < size)
 		ret[index] = lhs[index] + rhs;
 }
-
 __global__ void d_vvplus(int* lhs, int* rhs, int size, int* ret) {
 	int index = threadIdx.x + blockIdx.x * blockDim.x;
 	if (index < size)
 		ret[index] = lhs[index] + rhs[index];
+}
+__global__ void d_vsminus(int* lhs, int rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] - rhs;
+}
+__global__ void d_svminus(int lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs - rhs[index];
+}
+__global__ void d_vvminus(int* lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] - rhs[index];
+}
+__global__ void d_vstimes(int* lhs, int rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] * rhs;
+}
+__global__ void d_vvtimes(int* lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] * rhs[index];
+}
+__global__ void d_vsdivide(int* lhs, int rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] / rhs;
+}
+__global__ void d_svdivide(int lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs / rhs[index];
+}
+__global__ void d_vvdivide(int* lhs, int* rhs, int size, int* ret) {
+	int index = threadIdx.x + blockIdx.x * blockDim.x;
+	if (index < size)
+		ret[index] = lhs[index] / rhs[index];
 }
 
 inline int ssplus(int  lhs, int  rhs) { return lhs + rhs; }
@@ -642,6 +675,21 @@ int* vsminus(int* lhs, int  rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] - rhs;
+	else {
+		int *d_lhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vsminus << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 int* svminus(int  lhs, int* rhs, int size) {
@@ -649,6 +697,21 @@ int* svminus(int  lhs, int* rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs - rhs[i];
+	else {
+		int *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_svminus << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 int* vvminus(int* lhs, int* rhs, int size) {
@@ -656,6 +719,24 @@ int* vvminus(int* lhs, int* rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] - rhs[i];
+	else {
+		int *d_lhs, *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vvminus << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 
@@ -665,6 +746,21 @@ int* vstimes(int* lhs, int  rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] * rhs;
+	else {
+		int *d_lhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vstimes << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 #define svtimes(lhs, rhs, size) (vstimes(rhs,lhs,size))
@@ -673,6 +769,24 @@ int* vvtimes(int* lhs, int* rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] * rhs[i];
+	else {
+		int *d_lhs, *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vvtimes << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 
@@ -682,6 +796,21 @@ int* vsdivide(int* lhs, int  rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] / rhs;
+	else {
+		int *d_lhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vsdivide << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 int* svdivide(int  lhs, int* rhs, int size) {
@@ -689,6 +818,21 @@ int* svdivide(int  lhs, int* rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs / rhs[i];
+	else {
+		int *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_svdivide << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 int* vvdivide(int* lhs, int* rhs, int size) {
@@ -696,6 +840,24 @@ int* vvdivide(int* lhs, int* rhs, int size) {
 	if (SERIAL)
 		for (int i = 0; i < size; ++i)
 			ret[i] = lhs[i] / rhs[i];
+	else {
+		int *d_lhs, *d_rhs, *d_ret;
+
+		cudaMalloc((void **)&d_lhs, size * sizeof(int));
+		cudaMalloc((void **)&d_rhs, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_lhs, lhs, size * sizeof(int), cudaMemcpyHostToDevice);
+		cudaMemcpy(d_rhs, rhs, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_vvdivide << <(size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK, THREADS_PER_BLOCK >> >(d_lhs, d_rhs, size, d_ret);
+
+		cudaMemcpy(ret, d_ret, size * sizeof(int), cudaMemcpyDeviceToHost);
+
+		cudaFree(d_lhs);
+		cudaFree(d_rhs);
+		cudaFree(d_ret);
+	}
 	return ret;
 }
 
@@ -812,9 +974,31 @@ Token* evaluate_arith(Token* root) {
 	return NULL;
 }
 
-
 inline void func_print(Token* root) {
 	cout << printtok(root) << endl;
+}
+
+// Sum reduction provided in example by Nvidia
+__global__ void d_sum(int* vec, int size, int* ret) {
+	extern __shared__ int sdata[];
+
+	// each thread loads one element from global to shared mem
+	unsigned int tid = threadIdx.x;
+	unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+	sdata[tid] = vec[i];
+	__syncthreads();
+
+	// do sum reduction in shared mem
+
+	for (unsigned int s = blockDim.x / 2; s > 0; s >>= 1) {
+		if (tid < s) {
+			sdata[tid] += sdata[tid + s];
+		}
+
+		__syncthreads();
+	}
+
+	if (tid == 0) ret[0] = sdata[0];
 }
 
 int func_sum(int* vec, int size) {
@@ -822,6 +1006,50 @@ int func_sum(int* vec, int size) {
 	if (SERIAL) 
 		for (int i = 0; i < size; ++i) 
 			sum += vec[i];
+	else {
+		int *d_vec, *d_ret, *ret;
+		int num_blocks = (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+		ret = (int*)malloc(num_blocks * sizeof(int));
+
+		cudaMalloc((void **)&d_vec, size * sizeof(int));
+		cudaMalloc((void **)&d_ret, size * sizeof(int));
+
+		cudaMemcpy(d_vec, vec, size * sizeof(int), cudaMemcpyHostToDevice);
+
+		d_sum<<<num_blocks, THREADS_PER_BLOCK, num_blocks * THREADS_PER_BLOCK * sizeof(int)>>>(d_vec, size, d_ret);
+	
+		cudaMemcpy(ret, d_ret, num_blocks * sizeof(int), cudaMemcpyDeviceToHost);
+
+		while (num_blocks > 1) {
+			int *new_ret;
+			size = num_blocks;
+			num_blocks = (size + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
+
+			cudaFree(d_vec);
+			cudaFree(d_ret);
+
+			new_ret = (int*)malloc(num_blocks * sizeof(int));
+
+			cudaMalloc((void **)&d_vec, size * sizeof(int));
+			cudaMalloc((void **)&d_ret, num_blocks * sizeof(int));
+
+			cudaMemcpy(d_vec, ret, size * sizeof(int), cudaMemcpyHostToDevice);
+
+			d_sum<<<num_blocks, THREADS_PER_BLOCK, num_blocks * THREADS_PER_BLOCK * sizeof(int)>>>(d_vec, size, d_ret);
+			
+			cudaMemcpy(new_ret, d_ret, num_blocks * sizeof(int), cudaMemcpyDeviceToHost);
+
+			swap(ret, new_ret);
+
+			free(new_ret);
+		}
+
+		sum = ret[0];
+
+		cudaFree(d_vec);
+		cudaFree(d_ret);
+	}
 	
 	return sum;
 }
@@ -833,48 +1061,49 @@ Token* eval_sum(Token* arg) {
 	return tok;
 }
 
-/*void swap(int* lhs, int* rhs) {
-	int tmp = *rhs;
-	*rhs = *lhs;
-	*lhs = tmp;
-}*/
+/* partition and quick_select function used for finding median, 
+   code courtesy of http://www.sourcetricks.com/2011/06/quick-select.html#.WvCqJYjwaUk */
+int partition(int* input, int p, int r) {
+	int pivot = input[r];
 
-/* partition and kthSmallest functions used for Quickselect method of finding median, 
-   code courtesy of https://www.geeksforgeeks.org/quickselect-algorithm/ */
-int partition(int arr[], int l, int r) {
-	int x = arr[r], i = 1;
+	while (p < r) {
+		while (input[p] < pivot)
+			++p;
 
-	for (int j = l; j < r; ++j) {
-		if (arr[j] <= x) {
-			swap(arr[i], arr[j]);
-			++i;
+		while (input[r] > pivot)
+			--r;
+
+		if (input[p] == input[r])
+			++p;
+		else if (p < r) {
+			int tmp = input[p];
+			input[p] = input[r];
+			input[r] = tmp;
 		}
 	}
 
-	swap(arr[i], arr[r]);
-	return i;
+	return r;
 }
 
-int kthSmallest(int arr[], int l, int r, int k) {
-	if (k > 0 && k <= r - l + 1) {
-		int index = partition(arr, l, r);
-		
-		if (index - l == k - 1)
-			return arr[index];
+int quick_select(int* input, int p, int r, int k) {
+	if (p == r)
+		return input[p];
 
-		if (index - l > k - 1)
-			return kthSmallest(arr, l, index - 1, k);
+	int j = partition(input, p, r);
+	int length = j - p + 1;
 
-		return kthSmallest(arr, index + 1, r, k - index + l - 1);
-	}
-
-	return INT_MAX;
+	if (length == k)
+		return input[j];
+	else if (k < length)
+		return quick_select(input, p, j - 1, k);
+	else
+		return quick_select(input, j + 1, r, k - length);
 }
 
 int func_median(int* vec, int size) {
 	if (SERIAL) {
-		int k = size / 2;
-		return kthSmallest(vec, 0, size - 1, k);
+		int k = size / 2 + 1;
+		return quick_select(vec, 0, size - 1, k);
 	}
 	return 0;
 }
@@ -883,6 +1112,38 @@ Token* eval_median(Token* arg) {
 	Token* tok = new Token;
 	tok->toktype = Type::NUMBER;
 	tok->intval = func_median(arg->vecval, arg->intval);
+	return tok;
+}
+
+int func_max(int* vec, int size) {
+	int max = INT_MIN;
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			if (vec[i] > max)
+				max = vec[i];
+	return max;
+}
+
+Token* eval_max(Token* arg) {
+	Token* tok = new Token;
+	tok->toktype = Type::NUMBER;
+	tok->intval = func_max(arg->vecval, arg->intval);
+	return tok;
+}
+
+int func_min(int* vec, int size) {
+	int min = INT_MAX;
+	if (SERIAL)
+		for (int i = 0; i < size; ++i)
+			if (vec[i] < min)
+				min = vec[i];
+	return min;
+}
+
+Token* eval_min(Token* arg) {
+	Token* tok = new Token;
+	tok->toktype = Type::NUMBER;
+	tok->intval = func_min(arg->vecval, arg->intval);
 	return tok;
 }
 
@@ -895,6 +1156,10 @@ Token* evaluate_function(Token* root) {
 		return eval_sum(evaluate_expr_tree(root->operand));
 	case Which::MEDIAN:
 		return eval_median(evaluate_expr_tree(root->operand));
+	case Which::MIN:
+		return eval_min(evaluate_expr_tree(root->operand));
+	case Which::MAX:
+		return eval_max(evaluate_expr_tree(root->operand));
 	}
 	return NULL;
 }
@@ -922,18 +1187,24 @@ Token* evaluate_expr_tree(Token* root) {
 }
 
 void execute_instruction(Token* inst) {
-	cout << "Executing instruction " << printtok(inst) << endl;
+	if (DEBUG)
+		cout << "Executing instruction " << printtok(inst) << endl;
 	Token* result;
 	if ((result = evaluate_expr_tree(inst)) != NULL)
 		cerr << "WARNING: instruction evaluation result non-null : " << printtok(result) << endl;
 	
-	if (DEBUG) {
+	if (DEBUG && false) {
 		cout << "Symbol table: " << endl;
 		cout << printsymtab();
 	}
 }
 
 int main(int argc, char** argv) {
+	cudaEvent_t g_start, g_stop;
+	cudaEventCreate(&g_start);
+	cudaEventCreate(&g_stop);
+
+	cudaEventRecord(g_start);
     // Defaults
     /*
     ITERATIONS = 0;
@@ -943,7 +1214,7 @@ int main(int argc, char** argv) {
     WORKERS = 1;
     STEP = 3;
     */
-    THREADS_PER_BLOCK = 256;
+    THREADS_PER_BLOCK = 512;
 
     for (int i = 1; i < argc; ++i) {
 		if (STREQ(argv[i], "--input")) {
@@ -968,9 +1239,9 @@ int main(int argc, char** argv) {
     streambuf* orig_cin = 0;
 
     if (INPUT != NULL) {
-	input.open(INPUT, ifstream::in);
-	orig_cin = cin.rdbuf(input.rdbuf());
-	cin.tie(&cout);
+		input.open(INPUT, ifstream::in);
+		orig_cin = cin.rdbuf(input.rdbuf());
+		cin.tie(&cout);
     }
 
     vector<Token*> instructions;
@@ -1003,9 +1274,44 @@ int main(int argc, char** argv) {
 			cout << "    " << printtok(i) << endl;
 	}
 
+	cudaEvent_t ex_start, ex_stop;
+	cudaEventCreate(&ex_start);
+	cudaEventCreate(&ex_stop);
+
+	double elapsed_msec;
+	
+	time_t start = time(0);
+
+	cudaEventRecord(ex_start, 0);
 	for (Token* inst : instructions)
 		execute_instruction(inst);
+	cudaEventRecord(ex_stop, 0);
+	cudaEventSynchronize(ex_stop);
+
+	time_t end = time(0);
+	elapsed_msec = difftime(end, start) * 1000.0;
+
+	cudaEventRecord(g_stop);
+	cudaEventSynchronize(g_stop);
+
+	float ex_elapsed_msec;
+	cudaEventElapsedTime(&ex_elapsed_msec, ex_start, ex_stop);
+
+	float g_elapsed_msec;
+	cudaEventElapsedTime(&g_elapsed_msec, g_start, g_stop);
+
+	cudaEventDestroy(g_start);
+	cudaEventDestroy(g_stop);
+	cudaEventDestroy(ex_start);
+	cudaEventDestroy(ex_stop);
 
 	cout << "Done." << endl;
-    return 0;
+	
+	if (SERIAL) 
+		cout << "Execution time (alone): " << elapsed_msec << " msec" << endl;
+	else {
+		cout << "Execution time (alone): " << ex_elapsed_msec << " msec" << endl;
+	}
+
+	return 0;
 }

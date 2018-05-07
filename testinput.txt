@@ -1,8 +1,7 @@
-w = 1
-x = w + 2
-y = x + 3
-z = [ 1 2 3 4 ]
-t = [ 1 2 1 2 ] + 4
-a = [ 7 10 4 3 20 15 ]
-s = sum ( z )
-print ( s )
+arr = [ 1 5 2 4 3 ]
+n = min ( arr )
+x = max ( arr )
+m = median ( arr )
+print ( n )
+print ( x )
+print ( m )
